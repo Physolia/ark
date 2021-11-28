@@ -55,22 +55,22 @@ QList<QAction*> ExtractFileItemAction::actions(const KFileItemListProperties& fi
     }
 
     QAction *extractToAction = createAction(icon,
-                                                 i18nc("@action:inmenu Part of Extract submenu in Dolphin context menu", "Extract archive to..."),
-                                                 parentWidget,
-                                                 supportedUrls,
-                                                 AdditionalJobOptions::ShowDialog);
+                                            i18nc("@action:inmenu Part of Extract submenu in Dolphin context menu", "Extract archive to..."),
+                                            parentWidget,
+                                            supportedUrls,
+                                            ShowDialog); // TODO: Don't show the dialog again if the entered password is wrong.
 
     // #189177: disable "extract here" actions in read-only folders.
     if (readOnlyParentDir) {
        actions << extractToAction;
     } else {
         QMenu *extractMenu = new QMenu(parentWidget);
-
+        // clang-format off
         extractMenu->addAction(createAction(icon,
                                             i18nc("@action:inmenu Part of Extract submenu in Dolphin context menu", "Extract archive here"),
                                             parentWidget,
                                             supportedUrls,
-                                            AdditionalJobOptions::None));
+                                            AllowRetryPassword));
 
         extractMenu->addAction(extractToAction);
 
@@ -78,8 +78,8 @@ QList<QAction*> ExtractFileItemAction::actions(const KFileItemListProperties& fi
                                             i18nc("@action:inmenu Part of Extract submenu in Dolphin context menu", "Extract archive here, autodetect subfolder"),
                                             parentWidget,
                                             supportedUrls,
-                                            AdditionalJobOptions::AutoSubfolder));
-
+                                            AutoSubfolder | AllowRetryPassword));
+        // clang-format on
 
         QAction *extractMenuAction = new QAction(i18nc("@action:inmenu Extract submenu in Dolphin context menu", "Extract"), parentWidget);
         extractMenuAction->setMenu(extractMenu);
@@ -94,13 +94,13 @@ QList<QAction*> ExtractFileItemAction::actions(const KFileItemListProperties& fi
 QAction *ExtractFileItemAction::createAction(const QIcon& icon, const QString& name, QWidget *parent, const QList<QUrl>& urls, AdditionalJobOptions option)
 {
     QAction *action = new QAction(icon, name, parent);
-    connect(action, &QAction::triggered, this, [urls,name, option, parent,this]() {
+    connect(action, &QAction::triggered, this, [urls, name, action, option, parent, this]() {
         auto *batchExtractJob = new BatchExtract(parent);
         batchExtractJob->setDestinationFolder(QFileInfo(urls.first().toLocalFile()).path());
         batchExtractJob->setOpenDestinationAfterExtraction(ArkSettings::openDestinationFolderAfterExtraction());
-        if (option == AutoSubfolder) {
+        if (option & AutoSubfolder) {
             batchExtractJob->setAutoSubfolder(true);
-        } else if (option == ShowDialog) {
+        } else if (option & ShowDialog) {
             if (!batchExtractJob->showExtractDialog()) {
                 delete batchExtractJob;
                 return;
@@ -110,9 +110,15 @@ QAction *ExtractFileItemAction::createAction(const QIcon& icon, const QString& n
             batchExtractJob->addInput(url);
         }
         batchExtractJob->start();
-        connect(batchExtractJob, &KJob::finished, this, [this, batchExtractJob](){
+        connect(batchExtractJob, &KJob::finished, this, [this, batchExtractJob, action, option]() {
             if (!batchExtractJob->errorString().isEmpty()) {
-                Q_EMIT error(batchExtractJob->errorString());
+                // 100 is the error code of incorrect password
+                if (batchExtractJob->error() == 100 && (option & AllowRetryPassword)) {
+                    // If AllowRetryPassword is set, allow the user to type a new password if the entered password is wrong.
+                    action->trigger();
+                } else {
+                    Q_EMIT error(batchExtractJob->errorString());
+                }
             }
         });
     });
